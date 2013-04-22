@@ -849,6 +849,57 @@ class Bus extends EventStream
       unsubAll()
       sink? end()
 
+Bacon.When = (patterns...) ->
+    new EventStream (sink) ->  
+      sources = []
+      pats = []
+      len = patterns.length
+      i = 0
+      while (i < len)
+         pat = {f: patterns[i+1], ixs: []}
+         for s in patterns[i]
+           index = sources.indexOf s
+           if index < 0
+              sources.push(s)
+              index = sources.length - 1
+           pat.ixs.push index
+         pats.push pat
+         i = i + 2
+    
+      sources = _.map ((s) -> {obs: s, queue: [], isEnded: false}), sources
+    
+      match = (p) ->
+        _.all(p.ixs, (i) -> sources[i].queue.length > 0)
+    
+      cannotMatch = (p) ->
+        _.any(p.ixs, (i) -> sources[i].queue.length == 0 && sources[i].isEnded)
+    
+      part = (j, source) -> (unsubAll) -> 
+        source.obs.subscribe (e) ->
+          if e.isEnd()
+            sources[j].isEnded = true
+          else if e.isError()
+            reply = sink e
+          else
+            sources[j].queue.push e.value()
+            for p in pats
+               if match(p)
+                 val = p.f(sources[i].queue.shift() for i in p.ixs ...)
+                 reply = sink next(val)
+                 break;
+          if reply == Bacon.noMore or _.all(pats, cannotMatch)
+            sink end()    
+            unsubAll()
+            reply = Bacon.noMore  
+          reply or Bacon.more
+      
+      i = 0
+      combineSubscriptions _.map ((s) -> part(i++, s)), sources
+
+combineSubscriptions = (sources) ->
+  s(() -> null) for s in sources
+  () -> null
+
 class Some
   constructor: (@value) ->
   getOrElse: -> @value
@@ -983,10 +1034,14 @@ _ = {
   contains: (xs, x) -> indexOf(xs, x) != -1
   id: (x) -> x
   last: (xs) -> xs[xs.length-1]
-  all: (xs) ->
+  all: (xs, f = (x -> x)) ->
     for x in xs
-      return false if not x
+      return false if not f(x)
     return true
+  any: (xs, f = (x -> x)) ->
+    for x in xs
+      return true if f(x)
+    return false
   without: (x, xs) ->
     _.filter(((y) -> y != x), xs)
 }
