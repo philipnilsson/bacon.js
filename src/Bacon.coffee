@@ -850,30 +850,28 @@ class Bus extends EventStream
       sink? end()
 
 Bacon.When = (patterns...) ->
+    len = patterns.length
+    assert "arguments should be every other EventStream[]/function", len % 2 == 0
+    sources = []
+    pats = []
+    i = 0
+    while (i < len)
+       pat = {f: patterns[i+1], ixs: []}
+       for s in patterns[i]
+         index = sources.indexOf s
+         if index < 0
+            sources.push(s)
+            index = sources.length - 1
+         pat.ixs.push index
+       pats.push pat
+       i = i + 2
+    sources = _.map ((s) -> {obs: s, queue: [], isEnded: false}), sources
+    
     new EventStream (sink) ->  
-      sources = []
-      pats = []
-      len = patterns.length
-      i = 0
-      while (i < len)
-         pat = {f: patterns[i+1], ixs: []}
-         for s in patterns[i]
-           index = sources.indexOf s
-           if index < 0
-              sources.push(s)
-              index = sources.length - 1
-           pat.ixs.push index
-         pats.push pat
-         i = i + 2
-    
-      sources = _.map ((s) -> {obs: s, queue: [], isEnded: false}), sources
-    
       match = (p) ->
         _.all(p.ixs, (i) -> sources[i].queue.length > 0)
-    
       cannotMatch = (p) ->
         _.any(p.ixs, (i) -> sources[i].queue.length == 0 && sources[i].isEnded)
-    
       part = (j, source) -> (unsubAll) -> 
         source.obs.subscribe (e) ->
           if e.isEnd()
@@ -893,12 +891,26 @@ Bacon.When = (patterns...) ->
             reply = Bacon.noMore  
           reply or Bacon.more
       
-      i = 0
-      combineSubscriptions _.map ((s) -> part(i++, s)), sources
+      new CompositeSubscriber((part i,s) for s in sources).unsubscribe
 
-combineSubscriptions = (sources) ->
-  s(() -> null) for s in sources
-  () -> null
+class CompositeSubscriber
+  constructor: (@ss = []) ->
+    @unsubscribed = false
+    @subscriptions = []
+    @add s for s in ss
+  
+  add: (subscription) ->
+    return if @unsubscribed
+    unsub = subscription @unsubscribe
+    @subscriptions.push unless @subscriptions == null
+  
+  remove: (subscription) ->
+     @subscriptions = _.remove subscription @subscriptions
+  
+  unsubscribe: =>
+    @unsubscribed = true
+    s() for s in @subscriptions
+    @subscriptions = null
 
 class Some
   constructor: (@value) ->
