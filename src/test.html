@@ -2,8 +2,8 @@
   <head>
     <script src="bacon.js"> </script>
     <script type="text/javascript">
-      var x = Bacon.interval(4000, 'x').take(2)
-      var y = Bacon.interval(7000, 'y')
+      var x = Bacon.interval(2000, 'x').take(2)
+      var y = Bacon.interval(3000, 'y')
       var both = Bacon.When(
         [x, y], function(x,y) { return x + y },
         [x],    function(x) { return x })
