@@ -849,13 +849,17 @@ class Bus extends EventStream
       unsubAll()
       sink? end()
 
-Bacon.When = (patterns...) ->
+Bacon.when = (patterns...) ->
     len = patterns.length
-    assert "arguments should be every other EventStream[]/function", len % 2 == 0
+    usage = "when: arguments should be every other Observable[]/function"
+    assert usage, len % 2 == 0
     sources = []
     pats = []
     i = 0
     while (i < len)
+       patterns[i] = [patterns[i]] if patterns[i] instanceof Observable
+       assert usage, patterns[i] instanceof Array
+       patterns[i+1] = (() -> patterns[i+1]) if not patterns[i+1] instanceof Function
        pat = {f: patterns[i+1], ixs: []}
        for s in patterns[i]
          index = sources.indexOf s
@@ -872,8 +876,8 @@ Bacon.When = (patterns...) ->
         _.all(p.ixs, (i) -> sources[i].queue.length > 0)
       cannotMatch = (p) ->
         _.any(p.ixs, (i) -> sources[i].queue.length == 0 && sources[i].isEnded)
-      part = (j, source) -> (unsubAll) -> 
-        source.obs.subscribe (e) ->
+      part = (source, j) -> (unsubAll) -> 
+        me = source.obs.subscribe (e) ->
           if e.isEnd()
             sources[j].isEnded = true
           else if e.isError()
@@ -890,11 +894,11 @@ Bacon.When = (patterns...) ->
             unsubAll()
             reply = Bacon.noMore  
           reply or Bacon.more
-      
-      new CompositeSubscriber((part i,s) for s in sources).unsubscribe
+      i = 0
+      new CompositeDispose(part(s, i++) for s in sources).unsubscribe
 
-class CompositeSubscriber
-  constructor: (@ss = []) ->
+class CompositeDispose
+  constructor: (ss = []) ->
     @unsubscribed = false
     @subscriptions = []
     @add s for s in ss
@@ -902,12 +906,14 @@ class CompositeSubscriber
   add: (subscription) ->
     return if @unsubscribed
     unsub = subscription @unsubscribe
-    @subscriptions.push unless @subscriptions == null
+    @subscriptions.push unsub unless @unsubscribed
   
   remove: (subscription) ->
-     @subscriptions = _.remove subscription @subscriptions
+    return if @unsubscribed
+    @subscriptions = remove subscription, @subscriptions
   
   unsubscribe: =>
+    return if @unsubscribed
     @unsubscribed = true
     s() for s in @subscriptions
     @subscriptions = null
