@@ -138,33 +138,7 @@ Bacon.zipAsArray = (streams, more...) ->
   Bacon.zipWith(streams, Array)
 
 Bacon.zipWith = (streams, f) ->
-    new EventStream (sink) ->
-      bufs = ([] for s in streams)
-      unsubscribed = false
-      unsubs = (nop for s in streams)
-      unsubAll = (-> f() for f in unsubs ; unsubscribed = true)
-      zipSink = (e) ->
-        reply = sink e
-        if reply == Bacon.noMore or e.isEnd()
-          unsubAll()
-        reply
-      handle = (i) -> (e) ->
-       if e.isError()
-         zipSink e
-       else if e.isInitial()
-         Bacon.more
-       else
-         bufs[i].push(e)
-         if not e.isEnd() and _.all(b.length for b in bufs)
-           vs = (b.shift().value() for b in bufs)
-           reply = zipSink e.apply _.always f(vs ...)
-         if _.any(b.length and b[0].isEnd() for b in bufs)
-           reply = zipSink end()
-         reply or Bacon.more
-      for s,j in streams
-        unsubs[j] = do (i=j) ->
-          s.subscribe (handle i) unless unsubscribed
-      unsubAll
+  Bacon.when streams, f
 
 Bacon.combineAsArray = (streams, more...) ->
   if not (streams instanceof Array)
@@ -172,50 +146,33 @@ Bacon.combineAsArray = (streams, more...) ->
   if streams.length
     values = (None for s in streams)
     new Property (sink) =>
-      unsubscribed = false
-      unsubs = (nop for s in streams)
-      unsubAll = (-> f() for f in unsubs ; unsubscribed = true)
       ends = (false for s in streams)
-      checkEnd = ->
-        if _.all(ends)
-          reply = sink end()
-          unsubAll() if reply == Bacon.noMore
-          reply
       initialSent = false
-      combiningSink = (markEnd, setValue) =>
-        (event) =>
-          if (event.isEnd())
-            markEnd()
-            checkEnd()
-            Bacon.noMore
+      combiningSink = (index) => (unsubAll) ->
+        streams[index].subscribe (event) =>
+          if event.isEnd()
+            ends[index] = true
+            if _.all(ends)
+              sink end()
+              reply = Bacon.noMore
           else if event.isError()
             reply = sink event
-            unsubAll() if reply == Bacon.noMore
-            reply
           else
-            setValue(event.value)
+            values[index] = new Some(event.value)
             if _.all(_.map(((x) -> x.isDefined), values))
-              if initialSent and event.isInitial()
-                # don't send duplicate Initial
-                Bacon.more
-              else
+              # don't send duplicate Initial
+              unless initialSent and event.isInitial()
                 initialSent = true
                 valueArrayF = -> (x.get()() for x in values)
                 reply = sink(event.apply(valueArrayF))
-                unsubAll() if reply == Bacon.noMore
-                reply
-            else
-              Bacon.more
-      sinkFor = (index) ->
-        combiningSink(
-          (-> ends[index] = true)
-          ((x) -> values[index] = new Some(x)))
+          unsubAll() if reply == Bacon.noMore
+          reply or Bacon.more
       for stream, index in streams
-        stream = Bacon.constant(stream) if not (stream instanceof Observable)
-        unsubs[index] = stream.subscribe (sinkFor index) unless unsubscribed
-      unsubAll
+        streams[index] = Bacon.constant(stream) if not (stream instanceof Observable)
+      new CompositeDispose(combiningSink i for s,i in streams).unsubscribe 
   else
     Bacon.constant([])
+
 
 Bacon.onValues = (streams..., f) -> Bacon.combineAsArray(streams).onValues(f)
 
@@ -415,7 +372,7 @@ class Observable
       unsubSrc = src.subscribe(srcSink)
       unsubStopper = stopper.subscribe(stopperSink) unless unsubscribed
       unsubBoth
-  skip : (count) ->
+  skip: (count) ->
     @withHandler (event) ->
       if !event.hasValue()
         @push event
@@ -620,12 +577,9 @@ class EventStream extends Observable
   merge: (right) ->
     left = this
     new EventStream (sink) ->
-      unsubLeft = nop
-      unsubRight = nop
-      unsubscribed = false
-      unsubBoth = -> unsubLeft() ; unsubRight() ; unsubscribed = true
       ends = 0
-      smartSink = (event) ->
+      smartSink = (source) -> (unsubBoth) -> 
+       source.subscribe (event) ->
         if event.isEnd()
           ends++
           if ends == 2
@@ -636,10 +590,8 @@ class EventStream extends Observable
           reply = sink event
           unsubBoth() if reply == Bacon.noMore
           reply
-      unsubLeft = left.subscribe(smartSink)
-      unsubRight = right.subscribe(smartSink) unless unsubscribed
-      unsubBoth
-
+      new CompositeDispose([(smartSink left), (smartSink right)]).unsubscribe
+  
   toProperty: (initValue) ->
     initValue = None if arguments.length == 0
     @scan(initValue, latter)
@@ -902,6 +854,85 @@ class Bus extends EventStream
       unsubAll()
       sink? end()
 
+Bacon.when = (patterns...) ->
+    len = patterns.length
+    usage = "when: expecting arguments on the form (Observable+,function)+"
+    assert usage, len % 2 == 0
+    sources = []
+    pats = []
+    i = 0
+    while (i < len)
+       patterns[i] = [patterns[i]] unless patterns[i] instanceof Array
+       assert (p instanceof Observable), usage for p in patterns[i]
+       patterns[i+1] = (-> patterns[i+1]) unless patterns[i+1] instanceof Function
+       pat = {f: patterns[i+1], ixs: []}
+       for s in patterns[i]
+         index = sources.indexOf s
+         if index < 0
+            sources.push(s)
+            index = sources.length - 1
+         pat.ixs.push index
+       pats.push pat
+       i = i + 2
+    sources = _.map ((s) -> {obs: s, queue: [], isEnded: false}), sources
+    
+    new EventStream (sink) ->  
+      match = (p) ->
+        _.all(p.ixs, (i) -> sources[i].queue.length > 0)
+      cannotMatch = (p) ->
+        _.any(p.ixs, (i) -> sources[i].queue.length == 0 && sources[i].isEnded)
+      part = (source, j) -> (unsubAll) -> 
+        me = source.obs.subscribe (e) ->
+          if e.isEnd()
+            sources[j].isEnded = true
+            if _.all(pats, cannotMatch)
+              reply = Bacon.noMore
+              sink end()
+          else if e.isError()
+            reply = sink e
+          else
+            sources[j].queue.push e.value()
+            for p in pats
+               if match(p)
+                 val = p.f(sources[i].queue.shift() for i in p.ixs ...)
+                 reply = sink next(val)
+                 break;
+          unsubAll() if reply == Bacon.noMore
+          reply or Bacon.more
+      new CompositeDispose(part s,i for s,i in sources).unsubscribe
+
+Bacon.from = (initial, patterns...) ->
+  lateBindFirst = (f) -> (args) -> (i) -> f([i].concat(args)...)
+  i = patterns.length - 1
+  while (i > 0)
+    patterns[i] = do(x=patterns[i])->(->x) unless patterns[i] instanceof Function
+    patterns[i] = lateBindFirst patterns[i]
+    i = i - 2
+  Bacon.when(patterns...).scan initial, ((x,f) -> f x)
+
+
+class CompositeDispose
+  constructor: (ss = []) ->
+    @unsubscribed = false
+    @subscriptions = []
+    @add s for s in ss
+  
+  add: (subscription) ->
+    return if @unsubscribed
+    unsub = subscription @unsubscribe
+    @subscriptions.push unsub unless @unsubscribed
+    unsub
+  
+  remove: (subscription) ->
+    return if @unsubscribed
+    @subscriptions = _.remove subscription, @subscriptions
+  
+  unsubscribe: =>
+    return if @unsubscribed
+    @unsubscribed = true
+    s() for s in @subscriptions
+    @subscriptions = null
+
 class Some
   constructor: (@value) ->
   getOrElse: -> @value
@@ -1035,13 +1066,13 @@ _ = {
   contains: (xs, x) -> indexOf(xs, x) != -1
   id: (x) -> x
   last: (xs) -> xs[xs.length-1]
-  all: (xs) ->
+  all: (xs, f = _.id) ->
     for x in xs
-      return false if not x
+      return false unless f(x)
     return true
-  any: (xs) ->
+  any: (xs, f = _.id) ->
     for x in xs
-      return true if x
+      return true if f(x)
     return false
   without: (x, xs) ->
     _.filter(((y) -> y != x), xs)
@@ -1057,4 +1088,4 @@ Bacon.scheduler =
   setTimeout: (f,d) -> setTimeout(f,d)
   setInterval: (f, i) -> setInterval(f, i),
   clearInterval: (id) -> clearInterval(id),
-  now: -> new Date().getTime()
+  now: -> new Date().getTime
