@@ -344,34 +344,31 @@ class Observable
   takeUntil: (stopper) =>
     src = this
     @withSubscribe (sink) ->
-      unsubscribed = false
-      unsubSrc = nop
-      unsubStopper = nop
-      unsubBoth = -> unsubSrc() ; unsubStopper() ; unsubscribed = true
-      srcSink = (event) ->
+      composite = new CompositeDispose()
+      composite.add (unsubBoth) -> 
+       src.subscribe (event) ->
         if event.isEnd()
-          unsubStopper()
+          unsubBoth()
           sink event
           Bacon.noMore
         else
           event.onDone ->
-            if !unsubscribed
+            if not composite.unsubscribed
               reply = sink event
               if reply == Bacon.noMore
                 unsubBoth()
           Bacon.more
-      stopperSink = (event) ->
+      composite.add (unsubBoth) -> 
+       stopper.subscribe (event) ->
         if event.isError()
           Bacon.more
         else if event.isEnd()
           Bacon.noMore
         else
-          unsubSrc()
+          unsubBoth()
           sink end()
           Bacon.noMore
-      unsubSrc = src.subscribe(srcSink)
-      unsubStopper = stopper.subscribe(stopperSink) unless unsubscribed
-      unsubBoth
+      composite.unsubscribe
   skip: (count) ->
     @withHandler (event) ->
       if !event.hasValue()
@@ -919,13 +916,19 @@ class CompositeDispose
   
   add: (subscription) ->
     return if @unsubscribed
-    unsub = subscription @unsubscribe
-    @subscriptions.push unsub unless @unsubscribed
+    ended = false
+    unsub = nop
+    unsubMe = =>
+      unsub()
+      ended = true
+      @remove unsub
+    unsub = subscription @unsubscribe, unsubMe
+    @subscriptions.push unsub unless (@unsubscribed or ended)
     unsub
   
   remove: (subscription) ->
     return if @unsubscribed
-    @subscriptions = _.remove subscription, @subscriptions
+    _.remove subscription, @subscriptions
   
   unsubscribe: =>
     return if @unsubscribed
