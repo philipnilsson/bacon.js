@@ -443,48 +443,32 @@ class Observable
     f = makeSpawner(f)
     root = this
     new EventStream (sink) ->
-      children = []
-      rootEnd = false
-      unsubRoot = ->
-      unbind = ->
-        unsubRoot()
-        for unsubChild in children
-          unsubChild()
-        children = []
+      composite = new CompositeDispose()
       checkEnd = ->
-        if rootEnd and (children.length == 0)
-          sink end()
-      spawner = (event) ->
+        sink end() if composite.empty()
+      composite.add (unsubAll, unsubRoot) ->
+       root.subscribe (event) -> 
         if event.isEnd()
-          rootEnd = true
+          unsubRoot()
           checkEnd()
         else if event.isError()
           sink event
         else
           child = f event.value()
           child = Bacon.once(child) if not (child instanceof Observable)
-          unsubChild = undefined
-          childEnded = false
-          removeChild = ->
-            _.remove(unsubChild, children) if unsubChild?
-            checkEnd()
-          handler = (event) ->
+          composite.add (unsubAll, unsubMe) -> 
+           child.subscribe (event) ->
             if event.isEnd()
-              removeChild()
-              childEnded = true
+              unsubMe()
+              checkEnd()
               Bacon.noMore
             else
-              if event instanceof Initial
-                # To support Property as the spawned stream
-                event = event.toNext()
+              # To support Property as the spawned stream
+              event = event.toNext() if event instanceof Initial
               reply = sink event
-              if reply == Bacon.noMore
-                unbind()
+              unsubAll() if reply == Bacon.noMore
               reply
-          unsubChild = child.subscribe handler
-          children.push unsubChild if not childEnded
-      unsubRoot = root.subscribe(spawner)
-      unbind
+      composite.unsubscribe
   flatMapLatest: (f) =>
     f = makeSpawner(f)
     stream = @toEventStream()
@@ -912,29 +896,33 @@ class CompositeDispose
   constructor: (ss = []) ->
     @unsubscribed = false
     @subscriptions = []
+    @starting = []
     @add s for s in ss
-  
-  add: (subscription) ->
+  add: (subscription) =>
     return if @unsubscribed
     ended = false
     unsub = nop
+    @starting.push subscription
     unsubMe = =>
       unsub()
       ended = true
       @remove unsub
+      _.remove subscription, @starting
     unsub = subscription @unsubscribe, unsubMe
     @subscriptions.push unsub unless (@unsubscribed or ended)
+    _.remove subscription, @starting
     unsub
-  
   remove: (subscription) ->
     return if @unsubscribed
     _.remove subscription, @subscriptions
-  
   unsubscribe: =>
     return if @unsubscribed
     @unsubscribed = true
     s() for s in @subscriptions
-    @subscriptions = null
+    @subscriptions = []
+    @starting = []
+  empty: =>
+    not @subscriptions.length and not @starting.length 
 
 class Some
   constructor: (@value) ->
