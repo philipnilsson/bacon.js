@@ -836,6 +836,7 @@ class Bus extends EventStream
       sink? end()
 
 Bacon.when = (patterns...) ->
+    return Bacon.never() if patterns.length == 0
     len = patterns.length
     usage = "when: expecting arguments on the form (Observable+,function)+"
     assert usage, len % 2 == 0
@@ -901,7 +902,8 @@ Bacon.update = (initial, patterns...) ->
   lateBindFirst = (f) -> (args) -> (i) -> f([i].concat(args)...)
   i = patterns.length - 1
   while (i > 0)
-    patterns[i] = do(x=patterns[i])->(->x) unless patterns[i] instanceof Function
+    unless patterns[i] instanceof Function
+      patterns[i] = do(x=patterns[i])->(->x) 
     patterns[i] = lateBindFirst patterns[i]
     i = i - 2
   Bacon.when(patterns...).scan initial, ((x,f) -> f x)
