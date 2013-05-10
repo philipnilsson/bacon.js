@@ -345,7 +345,7 @@ class Observable
     src = this
     @withSubscribe (sink) ->
       composite = new CompositeUnsubscribe()
-      composite.add (unsubBoth) -> 
+      composite.add (unsubBoth) ->
        src.subscribe (event) ->
         if event.isEnd()
           unsubBoth()
@@ -358,7 +358,7 @@ class Observable
               if reply == Bacon.noMore
                 unsubBoth()
           Bacon.more
-      composite.add (unsubBoth) -> 
+      composite.add (unsubBoth) ->
        stopper.subscribe (event) ->
         if event.isError()
           Bacon.more
@@ -447,7 +447,7 @@ class Observable
       checkEnd = ->
         sink end() if composite.empty()
       composite.add (unsubAll, unsubRoot) ->
-       root.subscribe (event) -> 
+       root.subscribe (event) ->
         if event.isEnd()
           unsubRoot()
           checkEnd()
@@ -559,7 +559,7 @@ class EventStream extends Observable
     left = this
     new EventStream (sink) ->
       ends = 0
-      smartSink = (source) -> (unsubBoth) -> 
+      smartSink = (source) -> (unsubBoth) ->
        source.subscribe (event) ->
         if event.isEnd()
           ends++
@@ -572,7 +572,7 @@ class EventStream extends Observable
           unsubBoth() if reply == Bacon.noMore
           reply
       compositeUnsubscribe (smartSink left), (smartSink right)
-  
+
   toProperty: (initValue) ->
     initValue = None if arguments.length == 0
     @scan(initValue, latter)
@@ -856,13 +856,13 @@ Bacon.when = (patterns...) ->
        pats.push pat
        i = i + 2
     sources = _.map ((s) -> {obs: s, queue: [], isEnded: false}), sources
-    
-    new EventStream (sink) ->  
+
+    new EventStream (sink) ->
       match = (p) ->
         _.all(p.ixs, (i) -> sources[i].queue.length > 0)
       cannotMatch = (p) ->
         _.any(p.ixs, (i) -> sources[i].queue.length == 0 && sources[i].isEnded)
-      part = (source, j) -> (unsubAll) -> 
+      part = (source, j) -> (unsubAll) ->
         me = source.obs.subscribe (e) ->
           if e.isEnd()
             sources[j].isEnded = true
@@ -880,10 +880,10 @@ Bacon.when = (patterns...) ->
                  break;
           unsubAll() if reply == Bacon.noMore
           reply or Bacon.more
-      
+
       compositeUnsubscribe (part s,i for s,i in sources)...
 
-Bacon.from = (initial, patterns...) ->
+Bacon.update = (initial, patterns...) ->
   lateBindFirst = (f) -> (args) -> (i) -> f([i].concat(args)...)
   i = patterns.length - 1
   while (i > 0)
@@ -925,7 +925,7 @@ class CompositeUnsubscribe
     @subscriptions = []
     @starting = []
   empty: =>
-    not @subscriptions.length and not @starting.length 
+    not @subscriptions.length and not @starting.length
 
 class Some
   constructor: (@value) ->
