@@ -169,7 +169,7 @@ Bacon.combineAsArray = (streams, more...) ->
           reply or Bacon.more
       for stream, index in streams
         streams[index] = Bacon.constant(stream) if not (stream instanceof Observable)
-      new CompositeDispose(combiningSink i for s,i in streams).unsubscribe 
+      compositeUnsubscribe (combiningSink i for s,i in streams)...
   else
     Bacon.constant([])
 
@@ -344,7 +344,7 @@ class Observable
   takeUntil: (stopper) =>
     src = this
     @withSubscribe (sink) ->
-      composite = new CompositeDispose()
+      composite = new CompositeUnsubscribe()
       composite.add (unsubBoth) -> 
        src.subscribe (event) ->
         if event.isEnd()
@@ -443,7 +443,7 @@ class Observable
     f = makeSpawner(f)
     root = this
     new EventStream (sink) ->
-      composite = new CompositeDispose()
+      composite = new CompositeUnsubscribe()
       checkEnd = ->
         sink end() if composite.empty()
       composite.add (unsubAll, unsubRoot) ->
@@ -571,7 +571,7 @@ class EventStream extends Observable
           reply = sink event
           unsubBoth() if reply == Bacon.noMore
           reply
-      new CompositeDispose([(smartSink left), (smartSink right)]).unsubscribe
+      compositeUnsubscribe (smartSink left), (smartSink right)
   
   toProperty: (initValue) ->
     initValue = None if arguments.length == 0
@@ -880,7 +880,8 @@ Bacon.when = (patterns...) ->
                  break;
           unsubAll() if reply == Bacon.noMore
           reply or Bacon.more
-      new CompositeDispose(part s,i for s,i in sources).unsubscribe
+      
+      compositeUnsubscribe (part s,i for s,i in sources)...
 
 Bacon.from = (initial, patterns...) ->
   lateBindFirst = (f) -> (args) -> (i) -> f([i].concat(args)...)
@@ -891,8 +892,10 @@ Bacon.from = (initial, patterns...) ->
     i = i - 2
   Bacon.when(patterns...).scan initial, ((x,f) -> f x)
 
+compositeUnsubscribe = (ss...) ->
+  new CompositeUnsubscribe(ss).unsubscribe
 
-class CompositeDispose
+class CompositeUnsubscribe
   constructor: (ss = []) ->
     @unsubscribed = false
     @subscriptions = []
@@ -956,6 +959,7 @@ Bacon.Initial = Initial
 Bacon.Next = Next
 Bacon.End = End
 Bacon.Error = Error
+Bacon.CompositeUnsubscribe = CompositeUnsubscribe
 
 nop = ->
 latter = (_, x) -> x
