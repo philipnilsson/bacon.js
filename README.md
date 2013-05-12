@@ -822,6 +822,92 @@ function f(a, b) { console.log(a + b) }
 Bacon.onValues(Bacon.constant(1), Bacon.constant(2), f)
 ```
 
+Join Patterns
+-------------
+
+Join patterns are a generalization of the `zip` function. While zip
+synchronizes events from multiple streams pairwse, join patterns allow
+for implementation of more advanced synchronization patterns. Bacon.js
+uses the `Bacon.when` function to convert a list of synchronization
+patterns into a resulting event-stream.
+
+An analogy for join patterns can be made in terms of atoms and
+molecules. A join pattern can be regarded as a "recipe" for a chemical
+reaction. Lets say we have observables `oxygen`, `carbon` and
+`hydrogen`. We can state the reactions
+
+```js
+Bacon.when(
+  [oxygen, oxygen, hydrogen], make_water(),
+  [oxygen, carbon],           make_carbon_monoxide(),
+)
+```
+
+Now, every time a new 'atom' is spawned from one of the observables,
+this atom is added to a 'mixture' (or queue :). If at any time there
+are two oxygen atoms, and a hydrogen atom, the corresponding atoms are
+consumed, and output is produced via `make_water`.
+
+The same semantics apply for the second rule to create carbon
+monoxide. The rules are tried at each point from top to bottom. 
+
+Join patterns are indeed a generalization of zip, and is equivalent to
+a single-rule join pattern. The following observables have the same
+output.
+
+`Bacon.zipWith(a,b,c, combine)`
+`Bacon.when([a,b,c], combine)`
+
+**Join patterns and Bacon.bus**
+
+Example: 
+
+The result functions of join patterns are allowed to push values onto
+a Bus that may in turn be in one of its patterns. For instance, an
+implementation of the dining philosphers problem can be written as
+follows.  (http://en.wikipedia.org/wiki/Dining_philosophers_problem)
+      
+```js
+function bus() { return new Bacon.Bus() }
+
+// availability of chopsticks are implemented using Bus
+var chopsticks = [bus(), bus(), bus()]
+
+// hungry could be any type of observable, but we'll use bus here
+var hungry     = [bus(), bus(), bus()]
+
+// we make chopsticks available again by pushing a value onto its bus
+// the value itself is unimportant in this case, so we just use {}
+var eat = function(i) {
+  return function() {
+    setTimeout(function() {
+      console.log('done!')
+      chopsticks[i].push({})
+      chopsticks[(i+1) % 3].push({})
+    }, 1000);
+    return 'philosopher ' + i + ' eating'
+  } 
+}
+
+// a hungry philosopher can eat only when both his chopsticks are available. the key
+// here is that the eat function will push new values onto chopsticks when the 
+// philosopher is done eating, in this case after one second.
+var dining = Bacon.when(
+  [hungry[0], chopsticks[0], chopsticks[1]],  eat(0),
+  [hungry[1], chopsticks[1], chopsticks[2]],  eat(1),
+  [hungry[2], chopsticks[2], chopsticks[0]],  eat(2))
+  
+dining.log()
+
+// make all chopsticks initially available
+chopsticks[0].push({}); chopsticks[1].push({}); chopsticks[2].push({})
+
+// make philosophers hungry in some way
+for (var i = 0; i < 3; i++) {
+  hungry[0].push({}); hungry[1].push({}); hungry[2].push({})
+} 
+```
+
 Function Construction rules
 ---------------------------
 
