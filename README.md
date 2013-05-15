@@ -880,8 +880,8 @@ We can state reactions
 
 ```js
 Bacon.when(
-  [oxygen, oxygen, hydrogen], make_water(),
-  [oxygen, carbon],           make_carbon_monoxide(),
+  [oxygen, hydrogen, hydrogen], make_water(),
+  [oxygen, carbon],             make_carbon_monoxide(),
 )
 ```
 

@@ -841,7 +841,6 @@ Bacon.when = (patterns...) ->
     usage = "when: expecting arguments on the form (Observable+,function)+"
     assert usage, len % 2 == 0
     sources = []
-    properties = []
     pats = []
     i = 0
     while (i < len)
@@ -850,31 +849,36 @@ Bacon.when = (patterns...) ->
        patterns[i+1] = (-> patterns[i+1]) unless patterns[i+1] instanceof Function
        pat = {f: patterns[i+1], ixs: []}
        for s in patterns[i]
-         # properties will not be part of the synchronization pattern, so they are 
-         # passed through and are sampled at the end
-         if s instanceof Property 
-           arr = properties
-           value = (ps) -> ps[this.index]
-         else
-           arr = sources
-           value = -> sources[this.index].queue.shift()
-         index = arr.indexOf s
+         index = sources.indexOf s
          if index < 0
-            arr.push(s)
-            index = arr.length - 1
-         pat.ixs.push {
-           index: index,
-           value: value
-         }
+            sources.push(s)
+            index = sources.length - 1
+         (ix.count++ if ix.index == index) for ix in pat.ixs
+         pat.ixs.push {index: index, count: 1}
        pats.push pat
        i = i + 2
-    sources = _.map ((s) -> {obs: s, queue: [], isEnded: false}), sources
+    
+    class src 
+      constructor: (s) ->
+        @obs = s
+        @queue = []
+        @isEnded = false
+        if s instanceof Property
+          @value = ()  -> @queue[0]
+          @push  = (x) -> @queue = [x]
+          @ended = ()  -> false
+        else
+          @value = ()  -> @queue.shift()
+          @push  = (x) -> @queue.push(x)
+          @ended = (c) -> @queue.length < c && @isEnded
+      
+    sources = _.map ((s) -> new src(s)), sources
 
     fromStreams = new EventStream (sink) ->
       match = (p) ->
-        _.all(p.ixs, (i) -> sources[i.index].queue.length > 0)
+        _.all(p.ixs, (i) -> sources[i.index].queue.length >= i.count)
       cannotMatch = (p) ->
-        _.any(p.ixs, (i) -> sources[i.index].queue.length == 0 && sources[i.index].isEnded)
+        _.any(p.ixs, (i) -> sources[i.index].ended(i.count))
       part = (source, j) -> (unsubAll) ->
         source.obs.subscribe (e) ->
           if e.isEnd()
@@ -885,18 +889,16 @@ Bacon.when = (patterns...) ->
           else if e.isError()
             reply = sink e
           else
-            sources[j].queue.push e.value()
+            sources[j].push e.value()
             for p in pats
                if match(p)
-                 val = (ps) -> p.f(i.value(ps) for i in p.ixs ...)
+                 val = p.f(sources[i.index].value() for i in p.ixs ...)
                  reply = sink next(val)
                  break;
           unsubAll() if reply == Bacon.noMore
           reply or Bacon.more
 
       compositeUnsubscribe (part s,i for s,i in sources)...
-    
-    Bacon.combineAsArray(properties).sampledBy(fromStreams, (ps, f) -> f(ps))
     
 Bacon.update = (initial, patterns...) ->
   lateBindFirst = (f) -> (args) -> (i) -> f([i].concat(args)...)

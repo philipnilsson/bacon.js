@@ -1189,6 +1189,17 @@ describe "Bacon.when", ->
       ->
         Bacon.when()
       [])
+  it "works with multiples of streams", ->
+    expectStreamEvents(
+      -> 
+        [h,o,c,_] = ['h','o','c','_']
+        hs = series(1, [h, _, h, _, h, _, h, _, _, _, h, _, h]).filter((x) -> x == h)
+        os = series(1, [_, o, _, _, _, o, _, o, _, o, _, _, _]).filter((x) -> x == o)
+        cs = series(1, [_, _, _, c, _, _, _, _, c, _, _, c, _]).filter((x) -> x == c)
+        Bacon.when(
+          [hs, hs, os], (h1,h2,o) ->  [h1,h2,o],
+          [cs, os],    (c,o) -> [c,o])
+      [['h', 'h', 'o'], ['c', 'o'], ['h', 'h', 'o'], ['c', 'o']])
 
 describe "Bacon.update", ->
   it "works like Bacon.when, but produces a property, and can be defined in terms of a current value", ->
